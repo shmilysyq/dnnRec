@@ -1,126 +1,131 @@
+#  Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+#
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+"""An Example of a custom Estimator for the Iris dataset."""
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import numpy as np
-from sklearn import datasets
-from sklearn import metrics
-from sklearn import model_selection
+import argparse
 import tensorflow as tf
-import math
 
-embed_size = 64
-n_classes = len(itemIdx)
-X_FEATURE = 'x'  # Name of the input feature.
+import iris_data
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--batch_size', default=100, type=int, help='batch size')
+parser.add_argument('--train_steps', default=1000, type=int,
+                    help='number of training steps')
 
 def my_model(features, labels, mode, params):
-  """DNN with three hidden layers."""
-  # Create three fully connected layers respectively of size 10, 20, and 10.
-  net = features[X_FEATURE]
-  # Use `input_layer` to apply the feature columns.
-  net = tf.feature_column.input_layer(features, params['feature_columns'])
-  # concat feature
-  
-  for units in [128, 256, 128]:
-    net = tf.layers.dense(net, units=units, activation=tf.nn.relu)
+    """DNN with three hidden layers, and dropout of 0.1 probability."""
+    # Create three fully connected layers each layer having a dropout
+    # probability of 0.1.
+    net = tf.feature_column.input_layer(features, params['feature_columns'])
+    for units in params['hidden_units']:
+        net = tf.layers.dense(net, units=units, activation=tf.nn.relu)
 
-  # Compute loss.
-  # Construct the variables for the NCE loss
-    nce_weights = tf.Variable(
-        tf.truncated_normal([n_classes, units],
-                            stddev=1.0 / math.sqrt(units)))
-    nce_biases = tf.Variable(tf.zeros([n_classes]))
+    # Compute logits (1 per class).
+    logits = tf.layers.dense(net, params['n_classes'], activation=None)
 
-    loss = tf.reduce_mean(tf.nn.nce_loss(weights=nce_weights,
-                        biases=nce_biases,
-                        labels=labels,
-                        inputs=net,
-                        num_sampled=10,
-                        num_classes=n_classes))
+    # Compute predictions.
+    predicted_classes = tf.argmax(logits, 1)
+    if mode == tf.estimator.ModeKeys.PREDICT:
+        predictions = {
+            'class_ids': predicted_classes[:, tf.newaxis],
+            'probabilities': tf.nn.softmax(logits),
+            'logits': logits,
+        }
+        return tf.estimator.EstimatorSpec(mode, predictions=predictions)
 
-# Compute logits (1 per class).
-  logits = tf.layers.dense(net, 3, activation=None)
+    # Compute loss.
+    loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=logits)
 
-  # Compute predictions.
-  predicted_classes = tf.argmax(logits, 1)
-  if mode == tf.estimator.ModeKeys.PREDICT:
-    predictions = {
-        'class': predicted_classes,
-        'prob': tf.nn.softmax(logits)
-    }
-    return tf.estimator.EstimatorSpec(mode, predictions=predictions)
-  # Create training op with exponentially decaying learning rate.
-  if mode == tf.estimator.ModeKeys.TRAIN:
-    global_step = tf.train.get_global_step()
-    learning_rate = tf.train.exponential_decay(
-        learning_rate=0.1, global_step=global_step,
-        decay_steps=100, decay_rate=0.001)
-    optimizer = tf.train.AdagradOptimizer(learning_rate=learning_rate)
-    train_op = optimizer.minimize(loss, global_step=global_step)
+    # Compute evaluation metrics.
+    accuracy = tf.metrics.accuracy(labels=labels,
+                                   predictions=predicted_classes,
+                                   name='acc_op')
+    metrics = {'accuracy': accuracy}
+    tf.summary.scalar('accuracy', accuracy[1])
+
+    if mode == tf.estimator.ModeKeys.EVAL:
+        return tf.estimator.EstimatorSpec(
+            mode, loss=loss, eval_metric_ops=metrics)
+
+    # Create training op.
+    assert mode == tf.estimator.ModeKeys.TRAIN
+
+    optimizer = tf.train.AdagradOptimizer(learning_rate=0.1)
+    train_op = optimizer.minimize(loss, global_step=tf.train.get_global_step())
     return tf.estimator.EstimatorSpec(mode, loss=loss, train_op=train_op)
 
-  # Compute evaluation metrics.
-  eval_metric_ops = {
-      'accuracy': tf.metrics.accuracy(
-          labels=labels, predictions=predicted_classes)
-  }
-  return tf.estimator.EstimatorSpec(
-      mode, loss=loss, eval_metric_ops=eval_metric_ops)
 
-def input_fn(data_file, num_epochs, shuffle, batch_size):
-    """Generate an input function for the Estimator."""
-    assert tf.gfile.Exists(data_file), (
-        '%s not found. Please make sure you have either run data_download.py or '
-        'set both arguments --train_data and --test_data.' % data_file)
+def main(argv):
+    args = parser.parse_args(argv[1:])
 
+    # Fetch the data
+    (train_x, train_y), (test_x, test_y) = iris_data.load_data()
 
-    # Extract lines from input files using the Dataset API.
-    dataset = tf.data.TextLineDataset(data_file)
+    # Feature columns describe how to use the input.
+    my_feature_columns = []
+    for key in train_x.keys():
+        my_feature_columns.append(tf.feature_column.numeric_column(key=key))
 
-    if shuffle:
-        dataset = dataset.shuffle(buffer_size=_NUM_EXAMPLES['train'])
+    # Build 2 hidden layer DNN with 10, 10 units respectively.
+    classifier = tf.estimator.Estimator(
+        model_fn=my_model,
+        params={
+            'feature_columns': my_feature_columns,
+            # Two hidden layers of 10 nodes each.
+            'hidden_units': [10, 10],
+            # The model must choose between 3 classes.
+            'n_classes': 3,
+        })
 
-    dataset = dataset.map(parse_csv, num_parallel_calls=5)
-
-    # We call repeat after shuffling, rather than before, to prevent separate
-    # epochs from blending together.
-    dataset = dataset.repeat(num_epochs)
-    dataset = dataset.batch(batch_size)
-
-    iterator = dataset.make_one_shot_iterator()
-    features, labels = iterator.get_next()
-    return features, labels
-
-
-def main(unused_argv):
-  yanxuan = load()
-  x_train, x_test, y_train, y_test = model_selection.train_test_split(
-      yanxuan.data, yanxuan.target, test_size=0.2, random_state=42)
-  
-  my_feature_columns = []
-  for key in train_x.keys():
-    my_feature_columns.append(tf.feature_column.numeric_column(key=key))
-
-
-  classifier = tf.estimator.Estimator(
-      model_fn=my_model,
-      params={
-        'feature_columns': my_feature_columns,
-        # Two hidden layers of 10 nodes each.
-        'hidden_units': [10, 10],
-        # The model must choose between 3 classes.
-        'n_classes': 3,})
-
-  # Train.
-  classifier.train(
-        input_fn=lambda:iris_data.train_input_fn(train_x, train_y,
-                                                 args.batch_size),
+    # Train the Model.
+    classifier.train(
+        input_fn=lambda:iris_data.train_input_fn(train_x, train_y, args.batch_size),
         steps=args.train_steps)
 
     # Evaluate the model.
-  eval_result = classifier.evaluate(
-        input_fn=lambda:iris_data.eval_input_fn(test_x, test_y,
-                                                args.batch_size))
+    eval_result = classifier.evaluate(
+        input_fn=lambda:iris_data.eval_input_fn(test_x, test_y, args.batch_size))
+
+    print('\nTest set accuracy: {accuracy:0.3f}\n'.format(**eval_result))
+
+    # Generate predictions from the model
+    expected = ['Setosa', 'Versicolor', 'Virginica']
+    predict_x = {
+        'SepalLength': [5.1, 5.9, 6.9],
+        'SepalWidth': [3.3, 3.0, 3.1],
+        'PetalLength': [1.7, 4.2, 5.4],
+        'PetalWidth': [0.5, 1.5, 2.1],
+    }
+
+    predictions = classifier.predict(
+        input_fn=lambda:iris_data.eval_input_fn(predict_x,
+                                                labels=None,
+                                                batch_size=args.batch_size))
+
+    for pred_dict, expec in zip(predictions, expected):
+        template = ('\nPrediction is "{}" ({:.1f}%), expected "{}"')
+
+        class_id = pred_dict['class_ids'][0]
+        probability = pred_dict['probabilities'][class_id]
+
+        print(template.format(iris_data.SPECIES[class_id],
+                              100 * probability, expec))
+
 
 if __name__ == '__main__':
-  tf.app.run()
+    tf.logging.set_verbosity(tf.logging.INFO)
+    tf.app.run(main)
