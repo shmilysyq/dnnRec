@@ -1,0 +1,7 @@
+{
+    "python.pythonPath": "C:\\Users\\shengyaqi\\AppData\\Local\\Continuum\\anaconda2\\envs\\py35\\python.exe",
+    "python.unitTest.pyTestArgs": [],
+    "python.unitTest.unittestEnabled": false,
+    "python.unitTest.nosetestsEnabled": false,
+    "python.unitTest.pyTestEnabled": true
+}

@@ -19,6 +19,7 @@ def load_data(y_name='Species'):
     train_path, test_path = maybe_download()
 
     train = pd.read_csv(train_path, names=CSV_COLUMN_NAMES, header=0)
+    print(train)
     train_x, train_y = train, train.pop(y_name)
 
     test = pd.read_csv(test_path, names=CSV_COLUMN_NAMES, header=0)
