@@ -9,9 +9,9 @@ import sys
 
 import tensorflow as tf
 
-_CSV_COLUMNS = ['hist_i','target']
+_CSV_COLUMNS = ['hist_i','y']
 
-_CSV_COLUMN_DEFAULTS = [[''],['']]
+_CSV_COLUMN_DEFAULTS = [[''],[0]]
 
 _NUM_EXAMPLES = {
     'train': 32561,
@@ -61,13 +61,9 @@ def my_model(features, labels, mode, params):
     # Use `input_layer` to apply the feature columns.
     feature_columns = params["feature_columns"]
     net = tf.feature_column.input_layer(features, feature_columns)
-    # embeding_dense_tensor = tf.feature_column.input_layer(features, [feature_columns['hist_i']])
-    ## avg
-    embedding = tf.reduce_mean(net,1)
 
     for units in params['hidden_units']:
         net = tf.layers.dense(net, units=units, activation=tf.nn.relu)
-
     # Compute logits (1 per class).
     logits = tf.layers.dense(net, params['n_class'], activation=None)
 
@@ -82,8 +78,19 @@ def my_model(features, labels, mode, params):
         return tf.estimator.EstimatorSpec(mode, predictions=predictions)
 
     # Compute loss.
-    loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=logits)
-
+    # loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=logits)
+    # Compute loss.
+    print(labels)
+    labels = tf.reshape(labels,[-1,1])
+    print(labels)
+    weights = tf.get_variable("nce_weight",shape=[n_class, units])
+    biases = tf.get_variable("nce_biase",shape=[n_class])
+    loss = tf.reduce_mean(tf.nn.nce_loss(weights=weights,
+                     biases=biases,
+                     labels=labels,
+                     inputs=net,
+                     num_sampled=10,
+                     num_classes=n_class))
     # Compute evaluation metrics.
     accuracy = tf.metrics.accuracy(labels=labels,
                                    predictions=predicted_classes,
@@ -129,12 +136,16 @@ def input_fn(data_file, num_epochs, shuffle, batch_size):
         print(value)
         columns = tf.decode_csv(value, record_defaults=_CSV_COLUMN_DEFAULTS)
         features = dict(zip(_CSV_COLUMNS, columns))
-        labels = features.pop('target')
+        hist_i = features.get('hist_i',None)
+        if hist_i is not None:
+            arr = tf.string_split([hist_i],delimiter=' ')
+        features['hist_i']=arr.values
+        labels = features.pop('y')
         print(features,labels)
         return features, labels
 
     # Extract lines from input files using the Dataset API.
-    dataset = tf.data.TextLineDataset(data_file)
+    dataset = tf.data.TextLineDataset(data_file).skip(1)
 
     if shuffle:
         dataset = dataset.shuffle(buffer_size=_NUM_EXAMPLES['train'])
