@@ -6,16 +6,17 @@ import argparse
 import tensorflow as tf
 import shutil
 import sys
+from utils.data_process import * 
 
-import tensorflow as tf
+_CSV_COLUMNS = ['click_hist_i','click_hist_c','click_last_i','click_last_c','y']
 
-_CSV_COLUMNS = ['hist_i','y']
+_SEQ_COLUMNS = ['click_hist_i','click_hist_c']
 
-_CSV_COLUMN_DEFAULTS = [[''],[0]]
+_CSV_COLUMN_DEFAULTS = [[''],[''],[''],[''],[0]]
 
 _NUM_EXAMPLES = {
-    'train': 32561,
-    'validation': 16281,
+    'train': 2,
+    'validation': 3,
 }
 
 n_class = 1
@@ -45,22 +46,20 @@ parser.add_argument(
     help='Path to the test data.')
 
 def build_estimator(model_dir):
-    columns = build_model_columns()
     hidden_units = [100, 75, 50, 25]
     
     # Create a tf.estimator.RunConfig to ensure the model is run on CPU, which
     # trains faster than GPU for this model.
     run_config = tf.estimator.RunConfig().replace(
         session_config=tf.ConfigProto(device_count={'GPU': 0}))
-    return tf.estimator.Estimator(model_fn=my_model,config=run_config,params={"feature_columns":columns,"hidden_units":hidden_units,'n_class':n_class})
+    return tf.estimator.Estimator(model_fn=my_model,config=run_config,params={"hidden_units":hidden_units,'n_class':n_class})
 
 
 def my_model(features, labels, mode, params):    
 
     # Create three fully connected layers respectively of size 10, 20, and 10.
     # Use `input_layer` to apply the feature columns.
-    feature_columns = params["feature_columns"]
-    net = tf.feature_column.input_layer(features, feature_columns)
+    net = build_model_features(features)
 
     for units in params['hidden_units']:
         net = tf.layers.dense(net, units=units, activation=tf.nn.relu)
@@ -78,19 +77,19 @@ def my_model(features, labels, mode, params):
         return tf.estimator.EstimatorSpec(mode, predictions=predictions)
 
     # Compute loss.
-    # loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=logits)
+    loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=logits)
     # Compute loss.
-    print(labels)
-    labels = tf.reshape(labels,[-1,1])
-    print(labels)
-    weights = tf.get_variable("nce_weight",shape=[n_class, units])
-    biases = tf.get_variable("nce_biase",shape=[n_class])
-    loss = tf.reduce_mean(tf.nn.nce_loss(weights=weights,
-                     biases=biases,
-                     labels=labels,
-                     inputs=net,
-                     num_sampled=10,
-                     num_classes=n_class))
+    # print(labels)
+    # labels = tf.reshape(labels,[-1,1])
+    # print(labels)
+    # weights = tf.get_variable("nce_weight",shape=[n_class, units])
+    # biases = tf.get_variable("nce_biase",shape=[n_class])
+    # loss = tf.reduce_mean(tf.nn.nce_loss(weights=weights,
+    #                  biases=biases,
+    #                  labels=labels,
+    #                  inputs=net,
+    #                  num_sampled=10,
+    #                  num_classes=n_class))
     # Compute evaluation metrics.
     accuracy = tf.metrics.accuracy(labels=labels,
                                    predictions=predicted_classes,
@@ -109,21 +108,32 @@ def my_model(features, labels, mode, params):
     train_op = optimizer.minimize(loss, global_step=tf.train.get_global_step())
     return tf.estimator.EstimatorSpec(mode, loss=loss, train_op=train_op)
 
-def build_model_columns():
+def build_model_features(raw_features):
     """Builds a set of feature columns."""
-    # Continuous columns
-    # age = tf.feature_column.numeric_column('age')
+    features = {}
+    features.update(raw_features)
 
-    # # Transformations.
-    # age_buckets = tf.feature_column.bucketized_column(
-    #     age, boundaries=[18, 25, 30, 35, 40, 45, 50, 55, 60, 65])
-    itemID = tf.feature_column.categorical_column_with_vocabulary_list('hist_i',vocabulary_list=['1','2','3','4','5'],default_value=-1,dtype=tf.string)
+    # click_item_h & last_click_item  share embedding
+    itemIDCol = tf.feature_column.categorical_column_with_vocabulary_file("click_hist_i","./data/item_meta")
+    itemIDCol_1 = tf.feature_column.categorical_column_with_vocabulary_file("click_last_i","./data/item_meta")
 
-    columns = [
-        # To show an example of embedding
-        tf.feature_column.embedding_column(itemID, dimension=64)
-    ]
-    return columns
+    itemEmbed = tf.feature_column.shared_embedding_columns([itemIDCol, itemIDCol_1], 64 , combiner='mean')
+    clickItemListFeature = tf.feature_column.input_layer(raw_features, itemEmbed[0])
+    features.update({"click_hist_i":clickItemListFeature})
+    lastItemFeature = tf.feature_column.input_layer(raw_features, itemEmbed[1])
+    features.update({"click_last_i":lastItemFeature})
+
+
+    # click_cat_h & last_click_cat share embedding
+    catIDCol = tf.feature_column.categorical_column_with_vocabulary_file("click_hist_c","./data/cat_meta")
+    catIDCol_1 = tf.feature_column.categorical_column_with_vocabulary_file("click_last_c","./data/cat_meta")
+    catEmbed = tf.feature_column.shared_embedding_columns([catIDCol,catIDCol_1],64)
+    clickCatListFeature = tf.feature_column.input_layer(raw_features, catEmbed[0])
+    features.update({"click_hist_c":clickCatListFeature})
+    lastCatFeature = tf.feature_column.input_layer(raw_features, catEmbed[1])
+    features.update({"click_last_c":lastCatFeature})
+
+    return features
 
 def input_fn(data_file, num_epochs, shuffle, batch_size):
     """Generate an input function for the Estimator."""
@@ -133,15 +143,9 @@ def input_fn(data_file, num_epochs, shuffle, batch_size):
 
     def parse_csv(value):
         print('Parsing', data_file)
-        print(value)
         columns = tf.decode_csv(value, record_defaults=_CSV_COLUMN_DEFAULTS)
         features = dict(zip(_CSV_COLUMNS, columns))
-        hist_i = features.get('hist_i',None)
-        if hist_i is not None:
-            arr = tf.string_split([hist_i],delimiter=' ')
-        features['hist_i']=arr.values
         labels = features.pop('y')
-        print(features,labels)
         return features, labels
 
     # Extract lines from input files using the Dataset API.
@@ -159,7 +163,15 @@ def input_fn(data_file, num_epochs, shuffle, batch_size):
 
     iterator = dataset.make_one_shot_iterator()
     features, labels = iterator.get_next()
+
+    process_features(features,_SEQ_COLUMNS)
+    print("precess feature "+"_"*40)
+    print(features)
+    print("label "+"_"*40)
+    print(labels)
+
     return features, labels
+
 
 
 def main(unused_argv):
