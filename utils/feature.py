@@ -53,13 +53,17 @@ def test_embedding():
 
 
     color_embeding_dense_tensor = tf.feature_column.input_layer(color_data, [color_list_embeding])
+    last_color_embeding_tensor = tf.feature_column.input_layer(color_data, [last_color_embeding])
+
+    dot = tf.matmul(color_embeding_dense_tensor,last_color_embeding_tensor,transpose_b=True)
+    dot1 = tf.squeeze(dot,axis=1)
 
     with tf.Session() as session:
         session.run(tf.global_variables_initializer())
         session.run(tf.tables_initializer())
         print(session.run([color_column_tensor.id_tensor]))
         print('embeding' + '_' * 40)
-        print(session.run([color_embeding_dense_tensor]))
+        print(session.run([color_embeding_dense_tensor,last_color_embeding_tensor,dot,dot1]))
 
 
 def test_shared_embedding_column_with_hash_bucket():
@@ -84,16 +88,30 @@ def test_shared_embedding_column_with_hash_bucket():
     color_dense_tensor1 = tf.feature_column.input_layer(color_data, color_column_embed[1])
     color_dense_tensor2 = tf.feature_column.input_layer(color_data, color_column_embed)
 
+    input_layer = tf.concat([color_dense_tensor,color_dense_tensor1,color_dense_tensor2],1)
+
+
     with tf.Session() as session:
         session.run(tf.global_variables_initializer())
         session.run(tf.tables_initializer())
         print('use input_layer' + '_' * 40)
-        print(session.run([color_dense_tensor,color_dense_tensor1,color_dense_tensor2]))
+        print(session.run([color_dense_tensor,color_dense_tensor1,color_dense_tensor2,input_layer]))
 
-test_shared_embedding_column_with_hash_bucket()
+# test_shared_embedding_column_with_hash_bucket()
 
 
 # test_embedding()
 
 # test_categorical_column_with_vocabulary_list()
 
+def test_malt():
+    a = tf.constant([[1,2,3]])
+    b = tf.constant([[1,2,3]])
+    
+    rst = tf.matmul(a,b,transpose_b=True)
+    with tf.Session() as session:
+        session.run(tf.global_variables_initializer())
+        session.run(tf.tables_initializer())
+        print(session.run([a,b,rst]))
+
+test_malt()

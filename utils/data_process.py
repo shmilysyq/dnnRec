@@ -2,7 +2,7 @@ import tensorflow as tf
 
 def process_features(raw_features,params):
     for col in params:
-        several_values_columns_to_array(raw_features,col,' ')
+        several_values_columns_to_array(raw_features,col,'#')
     # with tf.Session() as session:
     #     session.run(tf.global_variables_initializer())
     #     session.run(tf.tables_initializer())
@@ -15,22 +15,31 @@ def several_values_columns_to_array(raw_features, feature_name, sep):
     # with tf.Session() as session:
     #     session.run(tf.global_variables_initializer())
     #     session.run(tf.tables_initializer())
-    #     print(session.run([split_data,raw_features]))
+    #     print(session.run([split_data]))
 
 data={"seq":['a,b,c','b']}
 param = ["seq"]
 
 # several_values_columns_to_array(data,"seq",',')
 
-_CSV_COLUMNS = ['click_hist_i','click_hist_c','click_last_i','click_last_c','y']
+# _CSV_COLUMNS = ['item_hist','cat1_session','cat2_session','cat3_session','cat4_session','click_last_i','click_last_cat1','click_last_cat2','click_last_cat3','click_last_cat4','label']
 
-_SEQ_COLUMNS = ['click_hist_i','click_hist_c']
+# _SEQ_COLUMNS = ['item_hist','cat1_session','cat2_session','cat3_session','cat4_session']
+
+# _CSV_COLUMN_DEFAULTS = [[''],[''],[''],[''],[''],[''],[''],[''],[''],[''],[0]]
+
+
+# several_values_columns_to_array(data,"seq",',')
+
+_CSV_COLUMNS = ['item_hist','cat1_session','click_last_i','click_last_cat1','label']
+
+_SEQ_COLUMNS = ['item_hist','cat1_session']
 
 _CSV_COLUMN_DEFAULTS = [[''],[''],[''],[''],[0]]
 
 _NUM_EXAMPLES = {
-    'train': 2,
-    'validation': 3,
+    'train': 1083722,
+    'validation': 2001,
 }
 
 def input_fn_test(data_file, num_epochs, shuffle, batch_size):
@@ -43,7 +52,7 @@ def input_fn_test(data_file, num_epochs, shuffle, batch_size):
         print('Parsing', data_file)
         columns = tf.decode_csv(value, record_defaults=_CSV_COLUMN_DEFAULTS)
         features = dict(zip(_CSV_COLUMNS, columns))
-        labels = features.pop('y')
+        labels = features.pop('label')
         return features, labels
 
     # Extract lines from input files using the Dataset API.
@@ -63,15 +72,15 @@ def input_fn_test(data_file, num_epochs, shuffle, batch_size):
     features, labels = iterator.get_next()
 
     process_features(features,_SEQ_COLUMNS)
-    # print("precess feature "+"_"*40)
-    # print(features)
-    # print("label "+"_"*40)
-    # print(labels)
+    print("precess feature "+"_"*40)
+    print(features)
+    print("label "+"_"*40)
+    print(labels)
 
     return features, labels
 
-feature,label = input_fn_test('./data/train.csv',10,False,3)
-with tf.Session() as session:
-    session.run(tf.global_variables_initializer())
-    session.run(tf.tables_initializer())
-    print(session.run([feature,label]))
+# feature,label = input_fn_test('./data/train',10,False,3)
+# with tf.Session() as session:
+#     session.run(tf.global_variables_initializer())
+#     session.run(tf.tables_initializer())
+#     print(session.run([feature,label]))
