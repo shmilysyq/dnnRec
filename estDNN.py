@@ -15,11 +15,11 @@ _SEQ_COLUMNS = ['item_hist','cat1_session','cat2_session','cat3_session','cat4_s
 _CSV_COLUMN_DEFAULTS = [[''],[''],[''],[''],[''],[''],[''],[''],[''],[''],[0],[''],[''],[''],[''],[''],['']]
 
 _NUM_EXAMPLES = {
-    'train': 18,
-    'validation': 2,
+    'train': 6227065,
+    'validation': 890119,
 }
 
-n_class = 2
+n_class = 15000
 
 parser = argparse.ArgumentParser()
 
@@ -35,18 +35,18 @@ parser.add_argument(
     help='The number of training epochs to run between evaluations.')
 
 parser.add_argument(
-    '--batch_size', type=int, default=512, help='Number of examples per batch.')
+    '--batch_size', type=int, default=1024, help='Number of examples per batch.')
 
 parser.add_argument(
-    '--train_data', type=str, default='./data/train_sample',
+    '--train_data', type=str, default='./data/train_sample_test',
     help='Path to the training data.')
 
 parser.add_argument(
-    '--test_data', type=str, default='./data/test_sample',
+    '--test_data', type=str, default='./data/test_sample_test',
     help='Path to the test data.')
 
 def build_estimator(model_dir):
-    hidden_units = [1024,512,5*128]
+    hidden_units = [1024,512,128]
     
     # Create a tf.estimator.RunConfig to ensure the model is run on CPU, which
     # trains faster than GPU for this model.
@@ -57,25 +57,27 @@ def build_estimator(model_dir):
 
 def my_model(features, labels, mode, params):    
 
+    n_class = params['n_class']
     # Create three fully connected layers respectively of size 10, 20, and 10.
     # Use `input_layer` to apply the feature columns.
-    net,concat_item_vec = build_model_features(features)
-    # print(parsedFeature.values)
-    # net = tf.concat(parsedFeature.values, axis=1)
-    # print(net)
-    # sample_w = tf.expand_dims(concat_item_vec,params['n_class'])
+    net = build_model_features(features)
     for units in params['hidden_units']:
         net = tf.layers.dense(net, units=units, activation=tf.nn.relu)
-    # Compute logits (1 per class).
-    # logits = tf.layers.dense(net, params['n_class'], activation=None)
-    user_vec = tf.expand_dims(net,1)
-    # sample_w = tf.transpose(concat_item_vec, perm=[0, 2, 1])
-    logits = tf.matmul(user_vec,concat_item_vec,transpose_b=True)
-    print(user_vec,concat_item_vec,logits)
 
+    # Compute loss.
+    weights = tf.get_variable("nce_weight",shape=[n_class, 128])
+    biases = tf.get_variable("nce_biase",shape=[n_class])
+    labels_a = tf.expand_dims(labels,1)
+    loss = tf.reduce_mean(tf.nn.sampled_softmax_loss(weights,biases,labels_a,net,20, n_class))
+
+
+    # Compute logits (1 per class).
+    # logits = tf.layers.dense(net, params['n_class'], activation=None,kernel_constraint=weights,bias_constraint=biases,trainable=False)
+    user_vec = tf.expand_dims(net,1)
+    logits = tf.matmul(net, weights,transpose_b=True) + biases
     # Compute predictions.
-    # predicted_classes = tf.argmax(logits, 1)
-    predicted_classes = tf.nn.softmax(logits)
+    predicted_classes = tf.argmax(logits, 1)
+    y_hat = tf.nn.softmax(logits)
     if mode == tf.estimator.ModeKeys.PREDICT:
         predictions = {
             'class_ids': predicted_classes[:, tf.newaxis],
@@ -83,16 +85,14 @@ def my_model(features, labels, mode, params):
             'logits': logits,
         }
         return tf.estimator.EstimatorSpec(mode, predictions=predictions)
-
-    # Compute loss.
-    loss = tf.losses.sparse_softmax_cross_entropy(labels=labels,logits=logits)
-    accuracy = tf.metrics.accuracy(labels=labels,
-                                   predictions=predicted_classes,
-                                   name='acc_op')
-    auc = tf.metrics.auc(labels=labels,predictions=predicted_classes,name= 'auc')
-    metrics = {'accuracy': accuracy,'auc':auc}
-    tf.summary.scalar('accuracy', accuracy[1])
-    tf.summary.scalar('auc', auc[1])
+    labels_a_cast = tf.cast(labels_a,dtype=tf.int64)
+    precision_k = tf.metrics.average_precision_at_k(labels=labels_a_cast,
+                                   predictions=y_hat,k=10,
+                                   name='precision_10')
+    # auc = tf.metrics.auc(labels=labels,predictions=predicted_classes,name= 'auc')
+    metrics = {'precision_k':precision_k}
+    tf.summary.scalar('precision_k', precision_k[1])
+    # tf.summary.scalar('auc', auc[1])
 
     if mode == tf.estimator.ModeKeys.EVAL:
         return tf.estimator.EstimatorSpec(
@@ -111,22 +111,19 @@ def build_model_features(raw_features):
     features = {}
     features.update(raw_features)
 
-    
-
-
     # click_item_h & last_click_item  share embedding
-    targetItemCol = tf.feature_column.categorical_column_with_vocabulary_file("item_id","./data/item_meta")
+    # targetItemCol = tf.feature_column.categorical_column_with_vocabulary_file("item_id","./data/item_meta")
     itemIDCol = tf.feature_column.categorical_column_with_vocabulary_file("item_hist","./data/item_meta")
     itemIDCol_1 = tf.feature_column.categorical_column_with_vocabulary_file("click_last_i","./data/item_meta")
 
-    itemEmbed = tf.feature_column.shared_embedding_columns([itemIDCol, itemIDCol_1,targetItemCol], 128 , combiner='mean')
+    itemEmbed = tf.feature_column.shared_embedding_columns([itemIDCol, itemIDCol_1], 128 , combiner='mean')
     clickItemListFeature = tf.feature_column.input_layer(raw_features, itemEmbed[0])
     features.update({"item_hist":clickItemListFeature})
     lastItemFeature = tf.feature_column.input_layer(raw_features, itemEmbed[1])
     features.update({"click_last_i":lastItemFeature})
 
-    targetItemFeature = tf.feature_column.input_layer(raw_features, itemEmbed[2])
-    features.update({"item_id":targetItemFeature})
+    # targetItemFeature = tf.feature_column.input_layer(raw_features, itemEmbed[2])
+    # features.update({"item_id":targetItemFeature})
 
 
     # click_cat_h & last_click_cat share embedding
@@ -183,8 +180,8 @@ def build_model_features(raw_features):
 
     input_layer = tf.concat([clickItemListFeature,lastItemFeature,clickCat1ListFeature,lastCat1Feature,clickCat2ListFeature,lastCat2Feature,clickCat3ListFeature,lastCat3Feature,clickCat4ListFeature,lastCat4Feature],1)
     
-    item_vec = tf.concat([targetItemFeature,targetcat1Feature,targetcat2Feature,targetcat3Feature,targetcat4Feature],1)
-    return input_layer,item_vec
+    # item_vec = tf.concat([targetItemFeature,targetcat1Feature,targetcat2Feature,targetcat3Feature,targetcat4Feature],1)
+    return input_layer
 
 def input_fn(data_file, num_epochs, shuffle, batch_size):
     """Generate an input function for the Estimator."""
@@ -244,6 +241,10 @@ def main(unused_argv):
 
         for key in sorted(results):
             print('%s: %s' % (key, results[key]))
+        
+        ## predict metric
+        # predictions = model.predict(input_fn=lambda: input_fn(
+        #     FLAGS.test_data, 1, False, FLAGS.batch_size))
 
 
 if __name__ == '__main__':

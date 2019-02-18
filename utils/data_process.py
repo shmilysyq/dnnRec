@@ -1,5 +1,4 @@
 import tensorflow as tf 
-
 def process_features(raw_features,params):
     for col in params:
         several_values_columns_to_array(raw_features,col,'#')
@@ -79,8 +78,8 @@ def input_fn_test(data_file, num_epochs, shuffle, batch_size):
 
     return features, labels
 
-# feature,label = input_fn_test('./data/train',10,False,3)
-# with tf.Session() as session:
-#     session.run(tf.global_variables_initializer())
-#     session.run(tf.tables_initializer())
-#     print(session.run([feature,label]))
+feature,label = input_fn_test('./data/train',10,False,3)
+with tf.Session() as session:
+    session.run(tf.global_variables_initializer())
+    session.run(tf.tables_initializer())
+    print(session.run([feature,label]))
